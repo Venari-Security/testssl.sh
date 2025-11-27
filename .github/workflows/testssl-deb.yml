@@ -77,9 +77,9 @@ jobs:
 
       - name: Build testssl .deb using your script
         run: |
-          chmod +x packaging/build_deb.sh
+          chmod +x packaging/build-deb.sh
           VERSION=$(cat version)
-          ./packaging/build_deb.sh "${VERSION}"
+          ./packaging/build-deb.sh "${VERSION}"
           ls -lh testssl_*_amd64.deb
 
       - uses: actions/upload-artifact@v4
