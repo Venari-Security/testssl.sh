@@ -1,0 +1,190 @@
+name: CI/CD Pipeline for testssl
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      trigger-step:
+        description: "Manually trigger: push-deb"
+        required: false
+        default: "push-deb"
+
+permissions:
+  contents: read
+
+jobs:
+  # 1️⃣ VERSIONING
+  versioning:
+    name: Generate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ver
+        run: |
+          BASE_VERSION=$(grep "Version" testssl_package/DEBIAN/control | cut -d':' -f2 | xargs)
+
+          REF="${GITHUB_REF}"
+          RUN_ID="${{ github.run_number }}"
+          SUFFIX=""
+
+          if [[ "$REF" == refs/heads/develop ]]; then
+            SUFFIX="-dev"
+          elif [[ "$REF" =~ refs/heads/Release ]]; then
+            SUFFIX="-stg"
+          elif [[ "$REF" == refs/heads/main ]]; then
+            SUFFIX="-prod"
+          elif [[ "$REF" =~ refs/tags/ ]]; then
+            SUFFIX=""
+          else
+            SUFFIX="-test"
+          fi
+
+          VERSION="${BASE_VERSION}${SUFFIX}-${RUN_ID}"
+          echo "Generated Version: ${VERSION}"
+          echo "${VERSION}" > version
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: version
+          path: version
+
+
+  # 2️⃣ BUILD DEBIAN PACKAGE
+  build_deb:
+    name: Build Debian Package
+    runs-on: ubuntu-latest
+    needs: versioning
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: version
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y dpkg-dev fakeroot
+
+      - name: Build testssl .deb using your script
+        run: |
+          chmod +x packaging/build_deb.sh
+          VERSION=$(cat version)
+          ./packaging/build_deb.sh "${VERSION}"
+          ls -lh testssl_*_amd64.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: "testssl_*_amd64.deb"
+
+
+  # 3️⃣ PUSH TO APTLY REPO
+  push-deb:
+    name: Push .deb to Aptly Repo
+    needs: build_deb
+    runs-on: ubuntu-latest
+
+    if: |
+      (github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/heads/develop') ||
+       startsWith(github.ref, 'refs/heads/Release') ||
+       github.ref == 'refs/heads/main' ||
+       startsWith(github.ref, 'refs/tags/'))) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.trigger-step == 'push-deb')
+
+    env:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS_DMS: ${{ secrets.SSH_KNOWN_HOSTS_DMS }}
+      SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
+      SSH_SERVER: ${{ secrets.SSH_SERVER }}
+      CLIENT_OVPN: ${{ secrets.CLIENT_OVPN }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+
+      # Determine target repo
+      - name: Determine Deployment Target
+        id: set-vars
+        run: |
+          REF="${GITHUB_REF#refs/heads/}"
+          COMPONENT="prod"
+
+          if [[ "$REF" =~ ^Release.* ]]; then COMPONENT="stg"; fi
+          if [[ "$REF" == "develop" ]]; then COMPONENT="dev"; fi
+          if [[ "$REF" == "main" ]]; then COMPONENT="prod"; fi
+
+          echo "component=$COMPONENT" >> $GITHUB_OUTPUT
+          echo "📦 Target Component: $COMPONENT"
+
+      # VPN
+      - name: Connect via VPN
+        run: |
+          sudo apt-get update -y -qq && sudo apt-get install -y -qq openvpn
+          echo "${CLIENT_OVPN}" | sudo tee /etc/openvpn/client.conf > /dev/null
+          echo "log /etc/openvpn/client.log" | sudo tee -a /etc/openvpn/client.conf
+          sudo openvpn --config /etc/openvpn/client.conf --daemon
+          sleep 30
+          sudo tail -n 20 /etc/openvpn/client.log
+
+      # SSH
+      - name: Setup SSH
+        run: |
+          sudo apt-get install -y -qq openssh-client
+          eval "$(ssh-agent -s)"
+          mkdir -p ~/.ssh
+          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-add ~/.ssh/id_rsa
+          echo "${SSH_KNOWN_HOSTS_DMS}" > ~/.ssh/known_hosts
+
+      # Verification log (your request)
+      - name: Verify SSH & Aptly
+        run: |
+          echo "Checking SSH connection to ${SSH_USERNAME}@${SSH_SERVER}..."
+          ssh -o StrictHostKeyChecking=yes ${SSH_USERNAME}@${SSH_SERVER} \
+            "hostname && aptly repo list || echo '⚠️ aptly not found or repo unavailable'"
+          echo "✅ SSH connection and repo check passed."
+
+      # Upload & publish
+      - name: Upload .deb and publish
+        run: |
+          DATE=$(date '+%y.%m.%d.%H.%M')
+          COMPONENT="${{ steps.set-vars.outputs.component }}"
+
+          echo "📤 Uploading .deb to ${SSH_USERNAME}@${SSH_SERVER}:repo-${COMPONENT}/"
+          scp testssl_*_amd64.deb ${SSH_USERNAME}@${SSH_SERVER}:repo-${COMPONENT}/
+
+          echo "🔄 Updating Aptly repo..."
+          ssh ${SSH_USERNAME}@${SSH_SERVER} "
+            aptly repo add -force-replace venarios-${COMPONENT} repo-${COMPONENT}/testssl_*_amd64.deb &&
+            aptly snapshot create venarios-${COMPONENT}-${DATE} from repo venarios-${COMPONENT} &&
+            aptly publish switch \
+                -batch \
+                -passphrase='${GPG_PASSPHRASE}' \
+                -component='${COMPONENT}' bullseye venarios-${COMPONENT}-${DATE}
+          "
+
+          echo '✅ Deployment completed successfully.'
+
+      - name: Summary
+        run: |
+          echo "🎯 Deployment Summary:"
+          echo "Branch: ${GITHUB_REF}"
+          echo "Target Component: ${{ steps.set-vars.outputs.component }}"
+          echo "Package pushed successfully."

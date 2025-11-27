@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -e
+
+INSTALL_DIR="/opt/venarisecurity/bin/testssl.sh"
+ACTION="$1"
+
+if [ "${ACTION}" = "purge" ]; then
+  if [ -d "${INSTALL_DIR}" ]; then
+    rm -rf "${INSTALL_DIR}"
+    echo "Removed ${INSTALL_DIR} during purge."
+  fi
+fi
+
+exit 0

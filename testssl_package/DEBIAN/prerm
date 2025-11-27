@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -e
+
+SYMLINK="/usr/bin/testssl"
+INSTALL_DIR="/opt/venarisecurity/bin/testssl.sh"
+SCRIPT="${INSTALL_DIR}/testssl.sh"
+
+# If the symlink points to our packaged script, remove it
+if [ -L "${SYMLINK}" ]; then
+  TARGET="$(readlink -f "${SYMLINK}")"
+  if [ "${TARGET}" = "${SCRIPT}" ]; then
+    rm -f "${SYMLINK}"
+  fi
+fi
+
+exit 0

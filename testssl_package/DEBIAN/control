@@ -1,0 +1,14 @@
+Package: testssl
+Section: utils
+Priority: optional
+Maintainer: Jalal Hamdane <jalal@example.com>
+Architecture: amd64
+Depends: openssl
+Homepage: https://github.com/venarisecurity/testssl.sh
+Description: TLS/SSL scanner packaged for Venari
+ This package installs the testssl.sh TLS/SSL scanner for internal use at
+ Venari Security. The script is installed under /opt/venarisecurity/bin and
+ used by internal systems.
+Version: 3.3.dev-venarisecurity
+
+

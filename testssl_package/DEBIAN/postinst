@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -e
+
+PKG="testssl"
+INSTALL_DIR="/opt/venarisecurity/bin/testssl.sh"
+SCRIPT="${INSTALL_DIR}/testssl.sh"
+SYMLINK="/usr/bin/testssl"
+
+# create install dir and set permissions
+mkdir -p "${INSTALL_DIR}"
+chmod 755 "$(dirname "${INSTALL_DIR}")" || true
+chmod 755 "${INSTALL_DIR}"
+
+# ensure the packaged script is present and executable
+if [ -f "${SCRIPT}" ]; then
+  chmod 755 "${SCRIPT}"
+else
+  echo "WARNING: ${SCRIPT} not found in package (postinst)." >&2
+fi
+
+# if existing non-symlink binary exists, back it up
+if [ -e "${SYMLINK}" ] && [ ! -L "${SYMLINK}" ]; then
+  mv "${SYMLINK}" "${SYMLINK}.bak" || true
+fi
+
+# create/overwrite symlink to packaged script
+ln -sf "${SCRIPT}" "${SYMLINK}"
+
+echo "${PKG} installed to ${INSTALL_DIR}. Symlink created at ${SYMLINK}."
+exit 0
