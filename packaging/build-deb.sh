@@ -44,8 +44,25 @@ fi
 # Ensure maintainer scripts executable
 chmod 755 "${PKG_DIR}/DEBIAN/"{postinst,prerm,postrm} 2>/dev/null || true
 
-# Ensure packaged script is executable
-TARGET="${PKG_DIR}/opt/venarisecurity/bin/testssl.sh/testssl.sh"
+# 🎯 NEW: Ensure all testssl runtime directories/files have correct permissions
+TESTSSL_ROOT="${PKG_DIR}/opt/venarisecurity/bin/testssl.sh"
+
+if [ -d "${TESTSSL_ROOT}" ]; then
+    echo "Fixing permissions under ${TESTSSL_ROOT} ..."
+    # Directories = 755
+    find "${TESTSSL_ROOT}" -type d -exec chmod 755 {} \;
+
+    # Shell scripts = 755
+    find "${TESTSSL_ROOT}" -type f -name "*.sh" -exec chmod 755 {} \;
+
+    # All other files = 644 (safe defaults)
+    find "${TESTSSL_ROOT}" -type f ! -name "*.sh" -exec chmod 644 {} \;
+else
+    echo "WARNING: Missing directory ${TESTSSL_ROOT}" >&2
+fi
+
+# Ensure main script is executable
+TARGET="${TESTSSL_ROOT}/testssl.sh"
 if [ -f "$TARGET" ]; then
   chmod 755 "$TARGET"
 else
