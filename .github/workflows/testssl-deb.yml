@@ -100,7 +100,7 @@ jobs:
 
           echo "📦 Found package: $DEB"
 
-          for COMPONENT in dev stg prod main; do
+          for COMPONENT in preprod; do
             echo "=============================="
             echo "➡ Uploading to repo-$COMPONENT/"
             echo "=============================="
